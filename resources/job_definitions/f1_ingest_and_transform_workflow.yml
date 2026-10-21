@@ -1,0 +1,149 @@
+# Databricks Workflow Definition for the F1 analytics use case study
+resources:
+
+  jobs:
+    f1_ingest_and_transform_workflow:
+      name: f1_ingest_and_transform_workflow
+      
+      # Job-level parameters (shared across all tasks)
+      parameters:
+        - name: f1_season_year
+          default: 2024
+        - name: f1_season_round
+          default: 1
+        - name: f1_api_export_filename_prefix
+          default: f1_api_export
+        - name: volume_root_path
+          default: /Volumes/${var.catalog}/${resources.schemas.bronze_schema.name}/${var.raw_volume_name}
+        - name: volume_subdir_path
+          default: race_results_dumps
+        - name: f1_api_base_url
+          default: https://f1api.dev/api
+        - name: snowflake_secret_scope
+          default: snowflake-iceberg-sync
+
+      # Task definitions
+      tasks:
+        # Step 1: Execute Bronze ingestion notebook
+        - task_key: extract_api
+          notebook_task:
+            notebook_path: ../../src/ingestion/extract_f1_source_data.ipynb
+            source: WORKSPACE
+            base_parameters:
+              f1_season_year: "{{job.parameters.f1_season_year}}"
+              f1_season_round: "{{job.parameters.f1_season_round}}"
+              f1_api_export_filename_prefix: "{{job.parameters.f1_api_export_filename_prefix}}"
+              volume_root_path: "{{job.parameters.volume_root_path}}"
+              volume_subdir_path: "{{job.parameters.volume_subdir_path}}"
+              f1_api_base_url: "{{job.parameters.f1_api_base_url}}"
+
+        # Step-2: Load F1 data into raw and prepared zone
+        - task_key: load_into_raw_and_prepared
+          max_retries: 0
+          min_retry_interval_millis: 0
+          retry_on_timeout: false
+          depends_on:
+            - task_key: extract_api
+          pipeline_task:
+            pipeline_id: ${resources.pipelines.f1_load_to_prepared.id}
+            full_refresh: ${var.full_refresh_all}
+
+        # Step-2b: Sync the raw layer's Iceberg tables to Snowflake right after the
+        # raw pipeline finishes — runs in parallel with curated_zone_transform
+        # (both depend only on load_into_raw_and_prepared), not after it, since
+        # syncing raw data to Snowflake has no reason to wait on the curated
+        # transform. Against the catalog integration — see
+        # src/utility/create_snowflake_catalog_integration.ipynb, run manually, once,
+        # to bootstrap that integration; this task never touches it. Which tables
+        # get synced and where comes entirely from the "raw" entry in
+        # src/utility/snowflake_sync_config.json (deployed alongside the notebook by
+        # the bundle's normal file sync), not a job parameter.
+        - task_key: raw_snowflake_share
+          max_retries: 0
+          min_retry_interval_millis: 0
+          retry_on_timeout: false
+          depends_on:
+            - task_key: load_into_raw_and_prepared
+          notebook_task:
+            notebook_path: ../../src/utility/sync_to_snowflake.ipynb
+            source: WORKSPACE
+            base_parameters:
+              catalog_name: ${var.catalog}
+              secret_scope: "{{job.parameters.snowflake_secret_scope}}"
+              layer: raw
+              pipeline_id: ${resources.pipelines.f1_load_to_prepared.id}
+          environment_key: snowflake_sync_env
+
+        # Step-3: Transform F1 data into curated zone
+        - task_key: curated_zone_transform
+          max_retries: 0
+          min_retry_interval_millis: 0
+          retry_on_timeout: false
+          depends_on:
+            - task_key: load_into_raw_and_prepared
+          pipeline_task:
+            pipeline_id: ${resources.pipelines.f1_curated_transformation.id}
+            full_refresh: ${var.full_refresh_all}
+
+        # Step-3b: Sync the curated layer's Iceberg tables to Snowflake right after
+        # the curated pipeline finishes — same parallel-with-the-next-layer
+        # reasoning as step-2b above.
+        - task_key: curated_snowflake_share
+          max_retries: 0
+          min_retry_interval_millis: 0
+          retry_on_timeout: false
+          depends_on:
+            - task_key: curated_zone_transform
+          notebook_task:
+            notebook_path: ../../src/utility/sync_to_snowflake.ipynb
+            source: WORKSPACE
+            base_parameters:
+              catalog_name: ${var.catalog}
+              secret_scope: "{{job.parameters.snowflake_secret_scope}}"
+              layer: curated
+              pipeline_id: ${resources.pipelines.f1_curated_transformation.id}
+          environment_key: snowflake_sync_env
+
+        # Step-4: Transform F1 data into modelled zone
+        - task_key: modelled_zone_transform
+          max_retries: 0
+          min_retry_interval_millis: 0
+          retry_on_timeout: false
+          depends_on:
+            - task_key: curated_zone_transform
+          pipeline_task:
+            pipeline_id: ${resources.pipelines.f1_analytics_transformation.id}
+            full_refresh: ${var.full_refresh_all}
+
+        # Step-4b: Sync the analytics/gold layer's Iceberg tables to Snowflake right
+        # after the analytics pipeline finishes — the last step in the job, since
+        # there's no further layer after this one.
+        - task_key: analytics_snowflake_share
+          max_retries: 0
+          min_retry_interval_millis: 0
+          retry_on_timeout: false
+          depends_on:
+            - task_key: modelled_zone_transform
+          notebook_task:
+            notebook_path: ../../src/utility/sync_to_snowflake.ipynb
+            source: WORKSPACE
+            base_parameters:
+              catalog_name: ${var.catalog}
+              secret_scope: "{{job.parameters.snowflake_secret_scope}}"
+              layer: analytics
+              pipeline_id: ${resources.pipelines.f1_analytics_transformation.id}
+          environment_key: snowflake_sync_env
+
+      # Serverless Python environment for the Snowflake sync task — declares its extra
+      # dependency here instead of a %pip install cell, so the task doesn't pay for an
+      # interpreter restart on every run.
+      environments:
+        - environment_key: snowflake_sync_env
+          spec:
+            client: "1"
+            dependencies:
+              - snowflake-connector-python
+
+      # Timeout and retry configuration
+      timeout_seconds: 0
+      max_concurrent_runs: 1
