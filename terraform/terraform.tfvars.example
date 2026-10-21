@@ -1,0 +1,37 @@
+# Copy to terraform.tfvars and fill in. This file DOES hold real secret material (the
+# Snowflake admin identity's private key — a dedicated service user bootstrapped once
+# by a human ACCOUNTADMIN, not your own personal account; see terraform/README.md) —
+# Terraform loads it straight into AWS Secrets Manager. The sync service user's key
+# pair is NOT entered here; Terraform generates it (see snowflake.tf). NEVER commit the
+# filled-in file; it's gitignored (terraform/**/terraform.tfvars), but double-check
+# before any `git add -A`.
+
+aws_profile           = "<named-aws-cli-profile>"
+databricks_profile    = "<named-databricks-cli-profile>"
+databricks_account_id = "<databricks-account-id>"   # `databricks auth describe --profile <profile>`
+
+aws_region = "us-east-1"
+# A -YYYYMMDD suffix (e.g. -20261018) is appended automatically at creation — don't
+# add your own suffix here.
+s3_bucket_name = "f1-analytics-uc-storage"
+catalog_name   = "f1_analytics"
+
+snowflake_secret_name = "federation-poc/snowflake"
+
+snowflake_organization_name     = "<org>"
+snowflake_account_name          = "<account>"
+snowflake_admin_user            = "SVC_IAC_ADMIN"
+snowflake_admin_role            = "SECURITYADMIN"
+snowflake_admin_private_key_pem = "-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----"
+
+snowflake_account_identifier = "<org>-<account>"
+# snowflake_service_user_name defaults to SVC_DATABRICKS_UC_READER — override if needed.
+
+snowflake_role_name = "UC_ICEBERG_READER"
+
+# Names to create — Terraform creates all three (snowflake_data.tf, under SYSADMIN),
+# they don't need to already exist.
+snowflake_warehouse      = "UC_ICEBERG_SYNC_WH"
+snowflake_warehouse_size = "XSMALL"
+snowflake_database       = "UC_ICEBERG_SYNC"
+snowflake_sync_schemas   = ["ANALYTICS", "RAW", "CURATED"]

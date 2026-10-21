@@ -1,0 +1,76 @@
+{
+  "description": "Declarative mapping of every Unity Catalog table synced to Snowflake as an Iceberg table, grouped by layer (= the Unity Catalog schema name, which the sync_snowflake_iceberg_tables job tasks pass as the 'layer' widget — one task per layer, run right after that layer's pipeline). target_schema must already exist in Snowflake (Terraform: snowflake_schema.uc_sync / snowflake_schema.additional_sync). race_raw_quarantined is deliberately excluded — quarantined/rejected records aren't meant to be externally readable.",
+  "layers": {
+    "raw": [
+      {
+        "source_table": "raw_race",
+        "target_schema": "RAW",
+        "target_table": "raw_race"
+      },
+      {
+        "source_table": "race_results_valid",
+        "target_schema": "RAW",
+        "target_table": "race_results_valid"
+      },
+      {
+        "source_table": "race_results_unnested",
+        "target_schema": "RAW",
+        "target_table": "race_results_unnested"
+      },
+      {
+        "source_table": "race_drivers",
+        "target_schema": "RAW",
+        "target_table": "race_drivers"
+      },
+      {
+        "source_table": "race_teams",
+        "target_schema": "RAW",
+        "target_table": "race_teams"
+      },
+      {
+        "source_table": "race_circuits",
+        "target_schema": "RAW",
+        "target_table": "race_circuits"
+      }
+    ],
+    "curated": [
+      {
+        "source_table": "dim_drivers",
+        "target_schema": "CURATED",
+        "target_table": "dim_drivers"
+      },
+      {
+        "source_table": "dim_teams",
+        "target_schema": "CURATED",
+        "target_table": "dim_teams"
+      },
+      {
+        "source_table": "dim_circuits",
+        "target_schema": "CURATED",
+        "target_table": "dim_circuits"
+      },
+      {
+        "source_table": "fact_race_results",
+        "target_schema": "CURATED",
+        "target_table": "fact_race_results"
+      }
+    ],
+    "analytics": [
+      {
+        "source_table": "driver_performance_summary",
+        "target_schema": "ANALYTICS",
+        "target_table": "driver_performance_summary"
+      },
+      {
+        "source_table": "team_performance_summary",
+        "target_schema": "ANALYTICS",
+        "target_table": "team_performance_summary"
+      },
+      {
+        "source_table": "circuit_summary",
+        "target_schema": "ANALYTICS",
+        "target_table": "circuit_summary"
+      }
+    ]
+  }
+}

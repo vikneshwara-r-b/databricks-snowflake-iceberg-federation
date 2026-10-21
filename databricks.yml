@@ -1,0 +1,106 @@
+# This is a Declarative Automation Bundle definition for f1_analytics.
+# See https://docs.databricks.com/dev-tools/bundles/index.html for documentation.
+bundle:
+  name: f1_analytics
+  engine: direct
+
+
+include:
+  - resources/**/*.yml
+
+# Variable declarations. These variables are assigned in the dev/prod targets below.
+variables:
+  catalog:
+    description: Describes which catalog to use
+  raw_zone_schema_name:
+    description: Raw zone Schema Name
+  curated_zone_schema_name:
+    description: Curated zone Schema Name
+  analytics_zone_schema_name:
+    description: Analytics zone Schema Name
+  raw_volume_name:
+    description: Unity Catalog Raw Volume Name
+  raw_volume_subdir_path:
+    description: Unity Catalog Raw Volumn Sub Directory
+  full_refresh_all:
+    description: >-
+      Deploy-time flag (not a job parameter — Databricks Jobs' legacy
+      per-task pipeline_params override used by `run-now`/`repair-run` for
+      full_refresh is incompatible with jobs that define job-level `parameters:`,
+      which this job does; and `pipeline_task.full_refresh` itself does not accept
+      `{{job.parameters.x}}` runtime substitution — confirmed live, the field came
+      back empty after a deploy that tried it) that sets every pipeline task's
+      `full_refresh` for this deploy. To force a one-off full refresh of all three
+      SDP pipelines: `databricks bundle deploy -t prod --var="full_refresh_all=true"`,
+      run the job, then redeploy with `full_refresh_all=false` (or omit — that's the
+      default) to return to normal incremental runs. Needs two deploys per use, not
+      a runtime toggle — that's a real Databricks Jobs constraint, not a shortcut
+      taken here.
+    default: "false"
+  job_run_as_application_id:
+    description: >-
+      Service principal the f1_ingest_and_transform_workflow job (and, via DAB's
+      run_as semantics, the pipelines it triggers) runs as instead of whichever
+      human deploys the bundle. Resolved by name at deploy time via a bundle
+      variable lookup — nothing to copy from Terraform output or hardcode here.
+      Reuses the same service principal Snowflake's catalog integration
+      authenticates as (terraform/databricks_access.tf,
+      databricks_service_principal.snowflake_reader, display_name
+      "svc-f1-analytics-automation") rather than a separate job-runner identity.
+    lookup:
+      service_principal: "svc-f1-analytics-automation"
+
+targets:
+  dev:
+    # The default target uses 'mode: development' to create a development copy.
+    # - Deployed resources get prefixed with '[dev my_user_name]'
+    # - Any job schedules and triggers are paused by default.
+    # See also https://docs.databricks.com/dev-tools/bundles/deployment-modes.html.
+    mode: development
+    default: true
+    # No workspace.host here on purpose — `databricks auth login` in the README's
+    # Setup step 2 already points the CLI at your workspace. Pin a host below only
+    # if you need to guarantee this target always deploys to one specific workspace
+    # regardless of the active CLI profile.
+    variables:
+      catalog: workspace
+      raw_zone_schema_name: raw
+      curated_zone_schema_name: curated
+      analytics_zone_schema_name: analytics
+      raw_volume_name: f1_api_export
+      raw_volume_subdir_path: race_results_dumps
+  prod:
+    mode: production
+    workspace:
+      root_path: /Workspace/PROD/.bundle/${bundle.name}/${bundle.target}
+    # Resolved via the job_run_as_application_id lookup variable above — nothing to
+    # fill in here. Running the job (and its pipelines) as a dedicated service
+    # principal, rather than the deploying human, keeps the job's identity/
+    # permissions independent of any one person's account lifecycle.
+    run_as:
+      service_principal_name: ${var.job_run_as_application_id}
+    # run_as alone only changes which identity EXECUTES the job/pipelines — it
+    # doesn't grant that identity access to the workspace files (notebooks) the
+    # bundle deploys, which stay owned by whoever ran `databricks bundle deploy`.
+    # Without this, the job fails at run time with "Unable to access the notebook
+    # ... identity used to run this job, svc-f1-analytics-automation, lacks the
+    # required permissions" — not a run_as misconfiguration, a missing grant on the
+    # deployed files themselves. CAN_MANAGE here is what the docs describe as
+    # cascading to "resources, workspace directories, and files specified in the
+    # bundle," not just the job/pipeline resources.
+    permissions:
+      - service_principal_name: ${var.job_run_as_application_id}
+        level: CAN_MANAGE
+      # Databricks recommends always including the deploying identity explicitly too
+      # — otherwise CAN_MANAGE is only granted if the identity that happens to run
+      # `databricks bundle deploy` doesn't change. Resolved at deploy time, never
+      # hardcoded.
+      - user_name: ${workspace.current_user.userName}
+        level: CAN_MANAGE
+    variables:
+      catalog: f1_analytics
+      raw_zone_schema_name: raw
+      curated_zone_schema_name: curated
+      analytics_zone_schema_name: analytics
+      raw_volume_name: f1_api_export
+      raw_volume_subdir_path: race_results_dumps

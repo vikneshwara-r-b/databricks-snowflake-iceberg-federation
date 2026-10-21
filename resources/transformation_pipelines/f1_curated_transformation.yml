@@ -1,0 +1,16 @@
+resources:
+  pipelines:
+    f1_curated_transformation:
+      name: f1_curated_transformation
+      catalog: ${var.catalog}
+      schema: ${resources.schemas.silver_schema.name}
+      serverless: true
+      root_path: "../../src/transformations"
+
+      libraries:
+        - glob:
+            include: ../../src/transformations/curated/**
+    
+      configuration:
+        catalog_name: ${var.catalog}
+        raw_schema_name: ${resources.schemas.bronze_schema.name}
