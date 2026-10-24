@@ -1,4 +1,4 @@
-# Bridges every credential the sync_snowflake_iceberg_tables notebook needs into a
+# Bridges every credential the sync_to_snowflake notebook needs into a
 # Databricks secret scope, read via dbutils.secrets.get(). Nothing here is ever typed
 # into notebook code or passed as a plain job parameter. Sourced directly from the same
 # variables/resources secrets.tf writes into Secrets Manager — not read back from
