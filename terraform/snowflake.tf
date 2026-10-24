@@ -31,7 +31,7 @@ resource "snowflake_service_user" "service_user" {
   name              = var.snowflake_service_user_name
   default_warehouse = snowflake_warehouse.service_user.name
   rsa_public_key    = local.service_user_rsa_public_key
-  comment           = "Key-pair auth service user for the Databricks UniForm/Iceberg sync notebook (sync_snowflake_iceberg_tables.ipynb) — created and rotated by Terraform"
+  comment           = "Key-pair auth service user for the Databricks UniForm/Iceberg sync notebook (sync_to_snowflake.ipynb) — created and rotated by Terraform"
 }
 
 # NOTE (flagged in the plan — verify before relying on it): exact privileges required for
@@ -40,7 +40,7 @@ resource "snowflake_service_user" "service_user" {
 
 resource "snowflake_account_role" "uc_iceberg_reader" {
   name    = var.snowflake_role_name
-  comment = "Grants needed to sync Unity Catalog Iceberg tables via the sync_snowflake_iceberg_tables notebook"
+  comment = "Grants needed to sync Unity Catalog Iceberg tables via the sync_to_snowflake notebook"
 }
 
 resource "snowflake_grant_privileges_to_account_role" "create_integration" {

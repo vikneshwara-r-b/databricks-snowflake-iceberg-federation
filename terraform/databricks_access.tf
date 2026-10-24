@@ -76,7 +76,7 @@ resource "databricks_grants" "external_location" {
   }
 }
 
-# The sync_snowflake_iceberg_tables notebook task (run by this same SP, as the job's
+# The sync_to_snowflake notebook task (run by this same SP, as the job's
 # run_as identity) reads every Snowflake credential via dbutils.secrets.get() against
 # this scope — without CAN_READ here, that task fails the moment it starts, regardless
 # of the Unity Catalog grants above.

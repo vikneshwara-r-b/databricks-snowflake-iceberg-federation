@@ -21,7 +21,7 @@ resource "snowflake_database" "uc_sync" {
   provider = snowflake.sysadmin
 
   name    = var.snowflake_database
-  comment = "Holds the Iceberg tables mirroring Unity Catalog's gold tables — created by Terraform"
+  comment = "Holds the Iceberg tables mirroring Unity Catalog's raw, curated and analytics tables — created by Terraform"
 }
 
 # One schema per entry in var.snowflake_sync_schemas (ANALYTICS/RAW/CURATED by
@@ -39,5 +39,5 @@ resource "snowflake_schema" "sync" {
 
   database = snowflake_database.uc_sync.name
   name     = each.value
-  comment  = "Schema the sync_snowflake_iceberg_tables notebook creates/refreshes Iceberg tables in"
+  comment  = "Schema the sync_to_snowflake notebook creates/refreshes Iceberg tables in"
 }

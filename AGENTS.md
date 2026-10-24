@@ -74,8 +74,8 @@ tasks** — `{raw,curated,analytics}_snowflake_share` — each right after
 that layer's own pipeline finishes (in parallel with the *next* layer's transform,
 not blocking it), not once at the end of the job. Each invocation passes a different
 `layer` widget value and creates/refreshes a Snowflake `ICEBERG TABLE` for every
-entry under that key in `src/utility/snowflake_sync_config.json` (top-level keys:
-`raw`/`curated`/`analytics`) — the single source of truth for which Unity Catalog
+entry under that key in `src/utility/snowflake_sync_config.json` (keys under
+`layers`: `raw`/`curated`/`analytics`) — the single source of truth for which Unity Catalog
 tables are synced and where in Snowflake they land. `race_raw_quarantined` has no
 entry under `raw` on purpose — quarantined/rejected records aren't meant to be
 externally readable. To add/remove a synced table or layer, edit that JSON file (and
@@ -149,7 +149,7 @@ value's Python type via `databricks bundle validate --output json`. Also note th
 full refresh breaks the Snowflake side until the sync notebook's UUID-mismatch
 recovery runs; see the sync section above.
 
-### Liquid Clustering is declared but currently inert — Predictive Optimization isn't on
+### Liquid Clustering: declared everywhere, whether it actually runs is unverified
 
 Every Lakeflow-managed table (`@dp.table`/`dp.create_streaming_table` in
 `src/transformations/prepared/` and `curated/`, `CREATE OR REFRESH MATERIALIZED
@@ -157,19 +157,37 @@ VIEW ... CLUSTER BY AUTO` in `src/transformations/modelled/*.sql`) declares
 `cluster_by_auto=True`/`CLUSTER BY AUTO` — this exists because Snowflake reads
 these tables as externally-managed Iceberg tables and can't run `OPTIMIZE`/
 clustering on them itself; all file-layout maintenance has to happen on the
-Databricks side. **But Predictive Optimization — the thing that actually selects
-clustering keys and executes the clustering/compaction — is deliberately not
-enabled** on the catalog (explicitly rejected; not this project's call to revisit
-without asking again). Until it's turned on by some other means, every
-`cluster_by_auto` flag in this codebase is declared but unexecuted — don't assume
-clustering is actually happening just because the flag is set. Separately: even
-once Predictive Optimization is on, its background `OPTIMIZE`/clustering runs
-*outside* the Lakeflow pipeline's own update/flow framework, so it won't show up in
-`event_log()`'s `flow_progress` events — `sync_to_snowflake.ipynb`'s change-detection
-logic (above) won't trigger an extra Snowflake refresh just because a background
-compaction pass happened between pipeline runs. Not a correctness issue (the next
-real data-driven pipeline update refreshes Snowflake as usual), just a reason
-Snowflake might lag behind an improved file layout by one pipeline run.
+Databricks side.
+
+**Predictive Optimization (PO) is off at every level above the tables, but on for
+the tables themselves.** Checked live against the workspace with `databricks
+catalogs|schemas|tables get`, not assumed:
+- Metastore `metastore_aws_us_east_1`, catalog `f1_analytics` and the `raw`/
+  `curated`/`analytics` schemas: effective value **DISABLE** (catalog and schemas
+  inherit it from the metastore). Enabling PO at the catalog was explicitly rejected
+  earlier — not this project's call to revisit without asking again.
+- All 14 pipeline-created tables (11 streaming tables, 3 materialized views):
+  `enable_predictive_optimization = ENABLE`, set **on the table itself**, not
+  inherited. Nothing in this repo's code or Terraform sets it, so it appears to be
+  applied by Lakeflow when it creates the table. The Databricks Predictive
+  Optimization docs list streaming tables and materialized views as *not*
+  maintained, while a Databricks employee on the community forum says PO maintenance
+  runs on pipeline-managed tables regardless of catalog/schema settings and can't be
+  disabled for them — the two sources conflict, so don't rely on either.
+
+So **don't assume clustering is happening, and don't assume it isn't.** To find out,
+check a table's history after a pipeline run (`SELECT operation, count(*) FROM
+(DESCRIBE HISTORY f1_analytics.<schema>.<table>) GROUP BY operation` — look for
+`OPTIMIZE`), which needs `SELECT` on the table. Until that's been looked at, treat
+`cluster_by_auto` as declared intent.
+
+Separately: any PO/`OPTIMIZE`/clustering pass runs *outside* the Lakeflow pipeline's
+own update/flow framework, so it won't show up in `event_log()`'s `flow_progress`
+events — `sync_to_snowflake.ipynb`'s change-detection logic (above) won't trigger an
+extra Snowflake refresh just because a background compaction pass happened between
+pipeline runs. Not a correctness issue (the next real data-driven pipeline update
+refreshes Snowflake as usual), just a reason Snowflake might lag behind an improved
+file layout by one pipeline run.
 
 `src/utility/create_snowflake_catalog_integration.ipynb` is a **separate, one-time,
 manually-run** notebook (not a job task) that bootstraps the Snowflake catalog

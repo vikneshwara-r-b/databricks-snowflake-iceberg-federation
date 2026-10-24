@@ -10,7 +10,7 @@
 
 resource "aws_secretsmanager_secret" "snowflake" {
   name        = var.snowflake_secret_name
-  description = "All Snowflake credentials for this project: the identity Terraform's own snowflake provider authenticates as, and the Terraform-generated service user the sync_snowflake_iceberg_tables notebook connects as"
+  description = "All Snowflake credentials for this project: the identity Terraform's own snowflake provider authenticates as, and the Terraform-generated service user the sync_to_snowflake notebook connects as"
   kms_key_id  = aws_kms_key.secrets.arn
 
   # Some AWS orgs enforce a Service Control Policy that explicitly denies
