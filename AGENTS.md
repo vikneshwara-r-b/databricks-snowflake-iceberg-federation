@@ -25,9 +25,10 @@ If the CLI is not installed, see: https://docs.databricks.com/dev-tools/cli/inst
 ### What this project is
 
 An end-to-end F1 race data lakehouse on Databricks (Lakeflow Declarative Pipelines,
-Unity Catalog), **plus** a federation layer that lets Snowflake read every table in
-the catalog directly as Iceberg, via UniForm + the Iceberg REST Catalog API +
-credential vending (no data copy). Full narrative/architecture: [`README.md`](README.md).
+Unity Catalog, one catalog per medallion zone), **plus** a federation layer that lets
+Snowflake read the tables (every table except the quarantine table) directly as
+Iceberg, via UniForm + the Iceberg REST Catalog API + credential vending (no data
+copy). Full narrative/architecture: [`README.md`](README.md).
 Full infra prerequisites/auth model/known-unknowns: [`terraform/README.md`](terraform/README.md).
 
 ### Two separate tools, two separate states — know which one owns what
@@ -37,9 +38,9 @@ Full infra prerequisites/auth model/known-unknowns: [`terraform/README.md`](terr
   with `databricks bundle deploy -t <dev|prod>`.
 - **`terraform/`** — a *separate* Terraform project/state that provisions the
   AWS/Databricks/Snowflake plumbing the bundle's Snowflake-federation piece depends
-  on (storage credential, catalog, service principal, Snowflake service user/role/
-  warehouse/database/schemas, secrets). Applied independently with `terraform apply`
-  from inside `terraform/`.
+  on (storage credential, the three zone catalogs, service principal, Snowflake
+  service user/role/warehouse/database/schemas, secrets). Applied independently with
+  `terraform apply` from inside `terraform/`.
 - Most cross-tool values are **copied manually, not wired automatically** — check
   whether changing one side needs the same update on the other; don't assume a
   Terraform output or a bundle variable updates itself. One exception:
@@ -48,14 +49,29 @@ Full infra prerequisites/auth model/known-unknowns: [`terraform/README.md`](terr
   a bundle variable `lookup` on its `display_name` — **never hardcode a literal
   application_id there**; if the lookup ever needs replacing (e.g. the SP is
   renamed), update the `lookup.service_principal` name, not a static value.
+  Another hand-copied pair: `databricks.yml`'s `prod` catalog variables (`raw_catalog`,
+  `curated_catalog`, `analytics_catalog`) must equal Terraform's `raw_catalog_name`,
+  `curated_catalog_name` and `catalog_name` (the gold catalog).
 
 ### Medallion layers → Lakeflow pipelines
 
-| Schema | Pipeline | Source |
-|---|---|---|
-| `raw` | `f1_load_to_prepared` | `src/transformations/prepared/*.py` |
-| `curated` | `f1_curated_transformation` | `src/transformations/curated/*.py` |
-| `analytics` (gold) | `f1_analytics_transformation` | `src/transformations/modelled/*.sql` |
+| Zone | Catalog (`prod`) / schema | Pipeline | Source |
+|---|---|---|---|
+| raw | `f1_raw`.`raw` | `f1_load_to_prepared` | `src/transformations/prepared/*.py` |
+| curated | `f1_curated`.`curated` | `f1_curated_transformation` | `src/transformations/curated/*.py` |
+| analytics (gold) | `f1_analytics`.`analytics` | `f1_analytics_transformation` | `src/transformations/modelled/*.sql` |
+
+**Each zone has its own Unity Catalog catalog** (bundle variables `raw_catalog`/
+`curated_catalog`/`analytics_catalog`; Terraform `raw_catalog_name`/
+`curated_catalog_name`/`catalog_name`). `catalog_name` stays the *gold* catalog
+(`f1_analytics`) — it was the project's only catalog originally, and keeping it there
+means the `uc-${var.catalog_name}-*` storage credential/location/IAM role names never
+changed. Cross-zone reads use the *source* zone's catalog: the curated pipeline gets
+`raw_catalog_name` and the analytics pipeline gets `curated_catalog_name` as pipeline
+configuration. `dev` points all three variables at the built-in `workspace` catalog
+(dev can't create catalogs), so zone separation there is by schema only. All three
+catalogs share one S3 bucket, storage credential and external location, each under its
+own `s3://<bucket>/<catalog>` prefix.
 
 The gold layer is deliberately **materialized views** (`CREATE OR REFRESH
 MATERIALIZED VIEW` in SQL), not plain tables — that's an explicit project
@@ -67,15 +83,52 @@ hidden internal backing table, which is what broke Snowflake access before this 
 in place. Don't "fix" an Iceberg-exposure issue by converting an MV to a plain table;
 fix the table properties instead.
 
-### Snowflake sync is config-driven, per-layer, not hardcoded or end-of-job
+### Gold is queried through a Snowflake catalog-linked database
 
-`src/utility/sync_to_snowflake.ipynb` runs as **three separate job
-tasks** — `{raw,curated,analytics}_snowflake_share` — each right after
+The analytics/gold catalog is **not** synced table by table. A Snowflake
+**catalog-linked database** (`F1_ANALYTICS_LINKED`) is linked to it via the
+`uc_f1_analytics_iceberg` catalog integration and discovers/refreshes every table in the
+`analytics` schema on its own (`SYNC_INTERVAL_SECONDS`, 60). It is created **once, by a
+human running SQL as `SYSADMIN`** (SQL in the root `README.md`'s deploy steps) — not by the
+notebook and not by Terraform. The notebook
+`src/utility/create_snowflake_catalog_integration.ipynb` (one integration per zone catalog —
+a REST integration's `CATALOG_NAME` is a single catalog) runs as `UC_ICEBERG_READER`, which
+deliberately holds **no** account-level `CREATE DATABASE`; Terraform can't grant it anyway
+(`SECURITYADMIN` lacks it `WITH GRANT OPTION`), and `SYSADMIN` already has it. Don't "fix" a
+missing database by adding a `CREATE DATABASE` grant to `UC_ICEBERG_READER` or
+`SECURITYADMIN` — that's the exact failure (`003102 (42501) Insufficient privileges`) this
+design replaced. The notebook's last cell grants `SYSADMIN` `USAGE` on the analytics
+integration, which the `CREATE DATABASE ... LINKED_CATALOG` needs.
+- **Keep `ALLOWED_WRITE_OPERATIONS = NONE`.** The default is `ALL`, and with it a
+  `DROP ICEBERG TABLE` in Snowflake also deletes the table and its data in Databricks.
+- `ALLOWED_NAMESPACES = ('analytics')` keeps the catalog's `information_schema` (not
+  Iceberg tables; errors during sync) out of discovery. No external volume — the
+  integration uses vended credentials.
+- There is deliberately no `analytics_snowflake_share` task and no `analytics` key in
+  `snowflake_sync_config.json`. Don't re-add one to "fix" a missing table; check the
+  linked database's discovery instead.
+- The database is owned by `SYSADMIN`; the sync service role can't see it, so other consumers
+  need grants (e.g. database roles).
+- Unverified until a live run — verify before assuming any of these:
+  - That `SYSADMIN` can create a linked database over an integration owned by
+    `UC_ICEBERG_READER`. The explicit `USAGE` grant is there to make it work; if it still
+    fails, create the database as `ACCOUNTADMIN`, or fall back to a one-time
+    `ACCOUNTADMIN` grant of `CREATE DATABASE` to `SECURITYADMIN` `WITH GRANT OPTION`.
+  - That the linked database discovers Lakeflow materialized views.
+  - What it does after a full refresh: per Snowflake's docs a UUID mismatch drops the
+    table from the linked database (the remote is untouched); whether the next poll
+    re-adds it is untested.
+
+### Snowflake sync of raw and curated is config-driven, per-layer, not hardcoded or end-of-job
+
+`src/utility/sync_to_snowflake.ipynb` runs as **two separate job
+tasks** — `{raw,curated}_snowflake_share` — each right after
 that layer's own pipeline finishes (in parallel with the *next* layer's transform,
 not blocking it), not once at the end of the job. Each invocation passes a different
-`layer` widget value and creates/refreshes a Snowflake `ICEBERG TABLE` for every
-entry under that key in `src/utility/snowflake_sync_config.json` (keys under
-`layers`: `raw`/`curated`/`analytics`) — the single source of truth for which Unity Catalog
+`layer` widget value and that layer's own `catalog_name` (so it uses that catalog's
+`uc_<catalog>_iceberg` integration) and creates/refreshes a Snowflake `ICEBERG TABLE`
+for every entry under that key in `src/utility/snowflake_sync_config.json` (keys under
+`layers`: `raw`/`curated`) — the single source of truth for which Unity Catalog
 tables are synced and where in Snowflake they land. `race_raw_quarantined` has no
 entry under `raw` on purpose — quarantined/rejected records aren't meant to be
 externally readable. To add/remove a synced table or layer, edit that JSON file (and
@@ -112,16 +165,22 @@ row-count-based check for both object types — that's the exact bug this versio
 fixes.
 
 The notebook **drops and recreates a Snowflake table** on one specific condition, so
-don't mistake it for stray cleanup code. A full refresh of a Lakeflow table rebuilds
+don't mistake it for stray cleanup code. (It decides whether to *create* a table from the
+table's name alone, so a stale table pinned to a removed catalog namespace — for example
+left over from the old single-catalog layout — is neither recreated nor refreshed
+successfully; drop such tables by hand once. This is read from the code, not an observed
+failure.) A full refresh of a Lakeflow table rebuilds
 its underlying storage and changes the table's Iceberg UUID; Snowflake's existing
 `ICEBERG TABLE` object is still pinned to the old UUID, and `ALTER ICEBERG TABLE ...
 REFRESH` then fails with `The UUID of Iceberg table '<name>' does not match the table
 UUID in metadata file '<path>'`. The refresh call is wrapped to catch exactly that
 message, `DROP ICEBERG TABLE` and recreate it through the same
 `create_iceberg_table()` helper used for first-time creation; every other
-`ProgrammingError` is re-raised unchanged. Confirmed live: all three
+`ProgrammingError` is re-raised unchanged. Confirmed live, back when there were three
+sync tasks (before gold moved to the catalog-linked database): all three
 `*_snowflake_share` tasks failed this way after a full-refresh run and all three
-succeeded on the repaired run with this handling in place. Keep the match narrow — a
+succeeded on the repaired run with this handling in place. The gold zone no longer goes
+through this code path. Keep the match narrow — a
 broad `except` here would silently drop and recreate Snowflake tables on unrelated
 errors, which also discards any grants issued directly on those tables.
 
@@ -146,8 +205,9 @@ the live API and both fail:
 `${var.x}` works because the DAB CLI substitutes it into the YAML *before* type
 checking, so the field receives a real boolean — verified by inspecting the resolved
 value's Python type via `databricks bundle validate --output json`. Also note that a
-full refresh breaks the Snowflake side until the sync notebook's UUID-mismatch
-recovery runs; see the sync section above.
+full refresh breaks the raw/curated Snowflake tables until the sync notebook's
+UUID-mismatch recovery runs; see the sync section above. For the gold zone's
+catalog-linked database the outcome is untested (see that section).
 
 ### Liquid Clustering: declared everywhere, whether it actually runs is unverified
 
@@ -166,6 +226,9 @@ catalogs|schemas|tables get`, not assumed:
   `curated`/`analytics` schemas: effective value **DISABLE** (catalog and schemas
   inherit it from the metastore). Enabling PO at the catalog was explicitly rejected
   earlier — not this project's call to revisit without asking again.
+  (That was checked when everything lived in `f1_analytics`; `f1_raw` and `f1_curated`
+  came later and should inherit **DISABLE** from the same metastore, but haven't been
+  checked yet — confirm with `databricks catalogs get` before relying on it.)
 - All 14 pipeline-created tables (11 streaming tables, 3 materialized views):
   `enable_predictive_optimization = ENABLE`, set **on the table itself**, not
   inherited. Nothing in this repo's code or Terraform sets it, so it appears to be
@@ -178,7 +241,9 @@ catalogs|schemas|tables get`, not assumed:
 So **don't assume clustering is happening, and don't assume it isn't.** To find out,
 check a table's history after a pipeline run (`SELECT operation, count(*) FROM
 (DESCRIBE HISTORY f1_analytics.<schema>.<table>) GROUP BY operation` — look for
-`OPTIMIZE`), which needs `SELECT` on the table. Until that's been looked at, treat
+`OPTIMIZE`), which needs `SELECT` on the table — the pipelines' service principal owns
+these tables, so a human gets that only through the catalog-level `ALL_PRIVILEGES` grant
+Terraform gives the identity it authenticates as. Until that's been looked at, treat
 `cluster_by_auto` as declared intent.
 
 Separately: any PO/`OPTIMIZE`/clustering pass runs *outside* the Lakeflow pipeline's
@@ -191,7 +256,11 @@ file layout by one pipeline run.
 
 `src/utility/create_snowflake_catalog_integration.ipynb` is a **separate, one-time,
 manually-run** notebook (not a job task) that bootstraps the Snowflake catalog
-integration itself — it's deliberately not re-run automatically.
+integrations (one per zone catalog) — it's deliberately not re-run automatically. Because
+it isn't a job task it doesn't get the sync job's `snowflake_sync_env` environment, so on
+serverless compute `snowflake-connector-python` must be installed by hand (the notebook's
+Environment panel, or `%pip install` in a cell at the top) or the first code cell fails
+with `ModuleNotFoundError`.
 
 ### Identity notes
 
@@ -235,15 +304,45 @@ integration itself — it's deliberately not re-run automatically.
 - `run_as` changes who *executes* the job/pipelines but **not** who can read the
   workspace files (notebooks) `databricks bundle deploy` writes — those stay owned
   by whoever ran that command. Missing this surfaces as `Unable to access the
-  notebook "..." ... the identity used to run this job, svc-snowflake-uc-iceberg-
-  reader, lacks the required permissions` at job run time, not at deploy time. Fixed
+  notebook "..." ... the identity used to run this job, svc-f1-analytics-automation,
+  lacks the required permissions` at job run time, not at deploy time. Fixed
   in `databricks.yml`'s `prod` target via a top-level `permissions:` block granting
   the SP `CAN_MANAGE` (cascades to resources *and* deployed workspace files/
-  directories, per Databricks' bundle-permissions precedence docs), plus the
-  `admins` group explicitly (a `databricks bundle validate` recommendation —
-  otherwise `CAN_MANAGE` only holds while the same identity keeps deploying). If a
+  directories, per Databricks' bundle-permissions precedence docs), plus the deploying
+  user explicitly via `${workspace.current_user.userName}` (resolved at deploy time, not
+  a hardcoded name or a group; a `databricks bundle validate` recommendation — otherwise
+  `CAN_MANAGE` only holds while the same identity keeps deploying). If a
   similar "lacks the required permissions" error shows up for a *different* notebook
   path later, check this block covers it before assuming `run_as` itself is broken.
+- **Workspace ACLs are not data privileges.** The bundle's `permissions` block (above)
+  controls who can manage the job, pipelines and notebooks; it gives **no** access to the
+  tables. The pipelines run as the service principal (`run_as`), so it owns every table
+  they create, and the human who owns the catalogs and deploys the bundle has no privilege
+  on them. Terraform therefore grants whichever identity it authenticates as
+  `ALL_PRIVILEGES` on all three catalogs (`databricks_grants.catalog`, a second `grant`
+  block next to the service principal's; inherited by current and future objects). That
+  resource is **authoritative** — never fix access with a manual `GRANT` or UI change on
+  these catalogs, it is reverted by the next `terraform apply`. The principal is looked up
+  at plan time (`data.databricks_current_user.me`), so no name is hardcoded, but the
+  grant follows whoever runs Terraform. Write privilege names in the underscore form the
+  provider stores (`USE_CATALOG`); the spaced form works but makes Terraform plan a
+  revoke-and-re-add of the whole grant whenever a sibling block changes.
+- **Snowflake privileges are deliberately narrow, with one accepted trade-off.**
+  `UC_ICEBERG_READER` (the sync service role) has account-level `CREATE INTEGRATION`, owns
+  the catalog integrations and the raw/curated `ICEBERG TABLE`s, and has **no**
+  `CREATE DATABASE`. `SECURITYADMIN` holds `CREATE INTEGRATION WITH GRANT OPTION` (one-time
+  manual grant) — and does not hold `CREATE DATABASE`, which is why a Terraform grant of it
+  failed. The trade-off: the runtime role owning the integrations is more than it needs
+  (only `USAGE` is required to reference one); the tighter design — admin-owned
+  integrations created once by a human `ACCOUNTADMIN`, no `create_integration` grant, no
+  grant-option prerequisite, optionally a dedicated custom Terraform role — is a deferred
+  follow-up, documented in `terraform/README.md` ("Least privilege in Snowflake"). Don't
+  widen these grants to work around an error without re-reading that section.
+- **Terraform-managed Snowflake objects can be dropped by hand.** If `UC_ICEBERG_SYNC` (or
+  a schema in it) disappears, `terraform plan` shows "has been deleted" plus `Marking the
+  resource as removed` warnings from the schemas and grants beneath it; those are expected,
+  and `terraform apply` recreates them. The linked database and the catalog integrations
+  are not Terraform-managed, so they're not recreated that way.
 - The Unity Catalog metastore's `external_access_enabled` setting (required for any
   credential vending to work at all) is a **shared, account-level resource** this
   project's Terraform deliberately does not manage — it's a one-time manual CLI step
@@ -258,4 +357,7 @@ integration itself — it's deliberately not re-run automatically.
   specific fields with targeted `grep`/`sed` instead.
 - Before suggesting or making a commit, check staged diffs for private keys, AWS
   access keys, account IDs, or other real credentials.
+- Don't hardcode a person's name or email in Terraform or the bundle: the deploying
+  identity is resolved at plan/deploy time (`data.databricks_current_user.me`,
+  `${workspace.current_user.userName}`).
 - Never commit unless explicitly asked.

@@ -14,7 +14,11 @@ aws_region = "us-east-1"
 # A -YYYYMMDD suffix (e.g. -20261018) is appended automatically at creation — don't
 # add your own suffix here.
 s3_bucket_name = "f1-analytics-uc-storage"
-catalog_name   = "f1_analytics"
+# One Unity Catalog catalog per medallion zone. catalog_name is the gold/analytics
+# zone's catalog.
+catalog_name         = "f1_analytics"
+raw_catalog_name     = "f1_raw"
+curated_catalog_name = "f1_curated"
 
 snowflake_secret_name = "federation-poc/snowflake"
 
@@ -34,4 +38,4 @@ snowflake_role_name = "UC_ICEBERG_READER"
 snowflake_warehouse      = "UC_ICEBERG_SYNC_WH"
 snowflake_warehouse_size = "XSMALL"
 snowflake_database       = "UC_ICEBERG_SYNC"
-snowflake_sync_schemas   = ["ANALYTICS", "RAW", "CURATED"]
+snowflake_sync_schemas   = ["RAW", "CURATED"]

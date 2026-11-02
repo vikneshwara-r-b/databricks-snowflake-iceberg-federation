@@ -1,5 +1,14 @@
 output "catalog_name" {
-  value = databricks_catalog.f1_analytics.name
+  description = "Gold/analytics zone catalog"
+  value       = databricks_catalog.f1_analytics.name
+}
+
+output "raw_catalog_name" {
+  value = databricks_catalog.raw.name
+}
+
+output "curated_catalog_name" {
+  value = databricks_catalog.curated.name
 }
 
 output "s3_bucket_name" {

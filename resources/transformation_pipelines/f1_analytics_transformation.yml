@@ -2,7 +2,7 @@ resources:
   pipelines:
     f1_analytics_transformation:
       name: f1_analytics_transformation
-      catalog: ${var.catalog}
+      catalog: ${var.analytics_catalog}
       schema: ${resources.schemas.gold_schema.name}
       serverless: true
       root_path: "../../src/transformations"
@@ -12,5 +12,5 @@ resources:
             include: ../../src/transformations/modelled/**
     
       configuration:
-        catalog_name: ${var.catalog}
+        curated_catalog_name: ${var.curated_catalog}
         curated_schema_name: ${resources.schemas.silver_schema.name}

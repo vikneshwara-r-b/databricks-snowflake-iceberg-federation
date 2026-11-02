@@ -27,10 +27,26 @@ variable "s3_bucket_name" {
 
 # --- Databricks workspace (existing — this project never creates a workspace) ---
 
+# One Unity Catalog catalog per medallion zone. catalog_name is the gold/analytics zone's
+# catalog (kept under this name so every uc-${var.catalog_name}-* AWS/UC resource name
+# stays put); raw and curated get their own, all sharing the same S3 bucket, storage
+# credential and external location (databricks_catalog.tf).
 variable "catalog_name" {
-  description = "Name of the Unity Catalog catalog to create. Must match the `catalog` variable used for the `prod` target in databricks.yml"
+  description = "Name of the gold/analytics zone's Unity Catalog catalog. Must match the `analytics_catalog` variable used for the `prod` target in databricks.yml. Also the naming prefix for the storage credential, external location and IAM role."
   type        = string
   default     = "f1_analytics"
+}
+
+variable "raw_catalog_name" {
+  description = "Name of the raw zone's Unity Catalog catalog to create. Must match the `raw_catalog` variable used for the `prod` target in databricks.yml"
+  type        = string
+  default     = "f1_raw"
+}
+
+variable "curated_catalog_name" {
+  description = "Name of the curated zone's Unity Catalog catalog to create. Must match the `curated_catalog` variable used for the `prod` target in databricks.yml"
+  type        = string
+  default     = "f1_curated"
 }
 
 # Which Unity Catalog tables get synced to Snowflake, and where, now lives in
@@ -121,7 +137,7 @@ variable "snowflake_database" {
 }
 
 variable "snowflake_sync_schemas" {
-  description = "Snowflake schemas (inside snowflake_database) Terraform creates to mirror this project's Unity Catalog schemas — one per Databricks schema any table in snowflake_sync_config.json targets. The first element is treated as the default/initial schema for the sync notebook's Snowflake connection (databricks_secrets.tf) — purely cosmetic session context, since every statement the notebook runs fully qualifies database.schema.table itself."
+  description = "Snowflake schemas (inside snowflake_database) Terraform creates to mirror this project's Unity Catalog schemas — one per Databricks schema any table in snowflake_sync_config.json targets. The gold/analytics zone is deliberately absent: it is exposed through the catalog-linked database (created by a human SYSADMIN, see README.md), not per-table sync. The first element is treated as the default/initial schema for the sync notebook's Snowflake connection (databricks_secrets.tf) — purely cosmetic session context, since every statement the notebook runs fully qualifies database.schema.table itself."
   type        = list(string)
-  default     = ["ANALYTICS", "RAW", "CURATED"]
+  default     = ["RAW", "CURATED"]
 }

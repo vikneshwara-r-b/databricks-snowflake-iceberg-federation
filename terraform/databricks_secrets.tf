@@ -50,7 +50,7 @@ resource "databricks_secret" "snowflake_schema" {
   # The sync notebook's initial Snowflake connection schema only — purely cosmetic
   # session context, since every statement it runs fully qualifies
   # database.schema.table itself. The first entry in snowflake_sync_schemas (default:
-  # ANALYTICS) is as good a default as any.
+  # RAW) is as good a default as any.
   string_value = var.snowflake_sync_schemas[0]
   scope        = databricks_secret_scope.snowflake_iceberg_sync.id
 }

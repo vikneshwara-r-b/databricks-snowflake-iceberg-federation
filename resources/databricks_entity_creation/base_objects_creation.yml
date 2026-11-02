@@ -1,22 +1,23 @@
-# Creates schema,volume for F1 analytics project
+# Creates the schemas (one per zone, each in that zone's own catalog) and the raw
+# landing volume for the F1 analytics project
 
 resources:
   schemas:
     bronze_schema:
       name: ${var.raw_zone_schema_name}
-      catalog_name: ${var.catalog}
+      catalog_name: ${var.raw_catalog}
       comment: 'Raw/Bronze Layer for F1 analytics project'
     silver_schema:
       name: ${var.curated_zone_schema_name}
-      catalog_name: ${var.catalog}
+      catalog_name: ${var.curated_catalog}
       comment: 'Silver Layer for F1 analytics project'
     gold_schema:
       name: ${var.analytics_zone_schema_name}
-      catalog_name: ${var.catalog}
+      catalog_name: ${var.analytics_catalog}
       comment: 'Gold Layer for F1 analytics project'
 
   volumes:
     raw_volume:
-      catalog_name: ${var.catalog}
+      catalog_name: ${var.raw_catalog}
       name: ${var.raw_volume_name}
       schema_name: ${resources.schemas.bronze_schema.name}

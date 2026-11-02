@@ -20,13 +20,13 @@ UNIFORM_TABLE_PROPERTIES = {
     "delta.universalFormat.enabledFormats": "iceberg",
 }
 
-catalog_name = spark.conf.get("catalog_name")
+raw_catalog_name = spark.conf.get("raw_catalog_name")
 schema_name = spark.conf.get("raw_schema_name")
 
-source_drivers_table = f"{catalog_name}.{schema_name}.race_drivers"
-source_teams_table = f"{catalog_name}.{schema_name}.race_teams"
-source_circuits_table = f"{catalog_name}.{schema_name}.race_circuits"
-source_race_results_table = f"{catalog_name}.{schema_name}.race_results_unnested"
+source_drivers_table = f"{raw_catalog_name}.{schema_name}.race_drivers"
+source_teams_table = f"{raw_catalog_name}.{schema_name}.race_teams"
+source_circuits_table = f"{raw_catalog_name}.{schema_name}.race_circuits"
+source_race_results_table = f"{raw_catalog_name}.{schema_name}.race_results_unnested"
 
 target_drivers_table = "dim_drivers"
 target_teams_table = "dim_teams"

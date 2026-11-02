@@ -1,5 +1,5 @@
 {
-  "description": "Declarative mapping of every Unity Catalog table synced to Snowflake as an Iceberg table, grouped by layer (= the Unity Catalog schema name, which the sync_snowflake_iceberg_tables job tasks pass as the 'layer' widget — one task per layer, run right after that layer's pipeline). target_schema must already exist in Snowflake (Terraform: snowflake_schema.uc_sync / snowflake_schema.additional_sync). race_raw_quarantined is deliberately excluded — quarantined/rejected records aren't meant to be externally readable.",
+  "description": "Declarative mapping of every Unity Catalog table synced to Snowflake as an individual Iceberg table, grouped by layer (= the Unity Catalog schema name, which the sync_to_snowflake job tasks pass as the 'layer' widget — one task per layer, run right after that layer's pipeline; each layer lives in its own Unity Catalog catalog, passed as the 'catalog_name' widget). target_schema must already exist in Snowflake (Terraform: snowflake_schema.sync). The analytics/gold layer is deliberately absent: it is queried through a Snowflake catalog-linked database (create_snowflake_catalog_integration.ipynb), which discovers its tables itself. race_raw_quarantined is deliberately excluded — quarantined/rejected records aren't meant to be externally readable.",
   "layers": {
     "raw": [
       {
@@ -53,23 +53,6 @@
         "source_table": "fact_race_results",
         "target_schema": "CURATED",
         "target_table": "fact_race_results"
-      }
-    ],
-    "analytics": [
-      {
-        "source_table": "driver_performance_summary",
-        "target_schema": "ANALYTICS",
-        "target_table": "driver_performance_summary"
-      },
-      {
-        "source_table": "team_performance_summary",
-        "target_schema": "ANALYTICS",
-        "target_table": "team_performance_summary"
-      },
-      {
-        "source_table": "circuit_summary",
-        "target_schema": "ANALYTICS",
-        "target_table": "circuit_summary"
       }
     ]
   }

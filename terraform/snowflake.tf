@@ -49,6 +49,13 @@ resource "snowflake_grant_privileges_to_account_role" "create_integration" {
   on_account        = true
 }
 
+# Deliberately NO account-level CREATE DATABASE grant here. The gold zone's
+# catalog-linked database is created by a human as SYSADMIN (which already holds
+# CREATE DATABASE and is Snowflake's conventional database owner) — see README.md's
+# "Create the catalog-linked database" step — so neither this role nor SECURITYADMIN
+# needs another account-level privilege. SYSADMIN reaches the integrations this role
+# owns through to_sysadmin below.
+
 resource "snowflake_grant_privileges_to_account_role" "warehouse_usage" {
   account_role_name = snowflake_account_role.uc_iceberg_reader.name
   privileges        = ["USAGE"]
@@ -58,12 +65,9 @@ resource "snowflake_grant_privileges_to_account_role" "warehouse_usage" {
   }
 }
 
-# One set of grants per schema in snowflake_schema.sync (ANALYTICS/RAW/CURATED by
-# default) — a single for_each, now that all of them live under one variable
-# (var.snowflake_sync_schemas). Previously two sets of near-identical resources (one
-# singular, one for_each) for the same reason snowflake_schema itself used to be
-# split — see snowflake_data.tf's comment on snowflake_schema.sync. Unified via
-# `terraform state mv`, not a destroy/recreate.
+# One set of grants per schema in snowflake_schema.sync (RAW/CURATED by default; the
+# gold zone lives in the catalog-linked database instead), driven by the single
+# var.snowflake_sync_schemas list.
 resource "snowflake_grant_privileges_to_account_role" "schema_privileges" {
   for_each          = snowflake_schema.sync
   account_role_name = snowflake_account_role.uc_iceberg_reader.name

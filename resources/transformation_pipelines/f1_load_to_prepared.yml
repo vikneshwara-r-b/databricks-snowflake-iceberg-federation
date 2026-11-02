@@ -4,7 +4,7 @@ resources:
   pipelines:
     f1_load_to_prepared:
       name: f1_load_to_prepared
-      catalog: ${var.catalog}
+      catalog: ${var.raw_catalog}
       schema: ${resources.schemas.bronze_schema.name}
       serverless: true
       root_path: "../../src/transformations"
@@ -14,5 +14,5 @@ resources:
             include: ../../src/transformations/prepared/**
       
       configuration:
-        volume_root_path: /Volumes/${var.catalog}/${resources.schemas.bronze_schema.name}/${var.raw_volume_name}
+        volume_root_path: /Volumes/${var.raw_catalog}/${resources.schemas.bronze_schema.name}/${var.raw_volume_name}
         volume_subdir_path: ${var.raw_volume_subdir_path}
