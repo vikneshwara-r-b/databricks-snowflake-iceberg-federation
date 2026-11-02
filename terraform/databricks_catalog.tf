@@ -44,10 +44,6 @@ resource "databricks_catalog" "f1_analytics" {
   comment      = "Managed by Terraform — gold/analytics zone catalog (materialized views), with external S3 storage. Queried from Snowflake through a catalog-linked database."
   storage_root = "s3://${aws_s3_bucket.uc_storage.id}/${var.catalog_name}"
 
-  lifecycle {
-    prevent_destroy = true
-  }
-
   depends_on = [databricks_external_location.uc_external]
 }
 
@@ -56,10 +52,6 @@ resource "databricks_catalog" "raw" {
   comment      = "Managed by Terraform — raw/bronze zone catalog (Auto Loader ingestion + flattening), with external S3 storage."
   storage_root = "s3://${aws_s3_bucket.uc_storage.id}/${var.raw_catalog_name}"
 
-  lifecycle {
-    prevent_destroy = true
-  }
-
   depends_on = [databricks_external_location.uc_external]
 }
 
@@ -67,10 +59,6 @@ resource "databricks_catalog" "curated" {
   name         = var.curated_catalog_name
   comment      = "Managed by Terraform — curated/silver zone catalog (SCD1/SCD2 dimensional model), with external S3 storage."
   storage_root = "s3://${aws_s3_bucket.uc_storage.id}/${var.curated_catalog_name}"
-
-  lifecycle {
-    prevent_destroy = true
-  }
 
   depends_on = [databricks_external_location.uc_external]
 }

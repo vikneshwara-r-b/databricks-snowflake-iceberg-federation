@@ -537,6 +537,72 @@ Outputs: `catalog_name`, `raw_catalog_name`, `curated_catalog_name`, `s3_bucket_
 - **The linked database and the catalog integrations are not Terraform-managed**, so Terraform will not notice if they change or disappear.
 - **Migrating from the single-catalog layout** is a clean rebuild: the bundle drops and recreates the `raw`/`curated` schemas, the raw volume and the pipelines; re-run the job to re-extract. Drop the old per-table `ICEBERG TABLE` objects in `RAW`/`CURATED` before running the sync tasks — the notebook decides whether to create a table by name alone, so a stale table pinned to a removed namespace would neither be recreated against the new integration nor refreshed (derived from reading the notebook, not an observed failure). Removing `ANALYTICS` from `snowflake_sync_schemas` destroys that schema and its `ICEBERG TABLE`s; Snowflake-side only.
 
+## Tearing everything down
+
+Nothing here has been run end to end; the order and the blockers below are derived from the code, so read each step before confirming it. A plain `terraform destroy` fails (catalogs, the versioned bucket), and destroying Terraform first strands objects that belong to Snowflake and the bundle. Go in this order.
+
+1. **Snowflake objects, tables first** (as `ACCOUNTADMIN`, since `SYSADMIN` owns the linked database and `UC_ICEBERG_READER` owns the rest). Do this while Databricks still exists. A catalog integration can't be dropped while a table or database still uses it (`Catalog Integration ... cannot be dropped because it has active table(s) using it`), so drop the users before the integrations:
+
+   ```sql
+   DROP DATABASE IF EXISTS F1_ANALYTICS_LINKED;   -- uses the analytics integration
+   DROP DATABASE IF EXISTS UC_ICEBERG_SYNC;       -- holds the raw and curated ICEBERG TABLEs
+   DROP CATALOG INTEGRATION IF EXISTS uc_f1_raw_iceberg;
+   DROP CATALOG INTEGRATION IF EXISTS uc_f1_curated_iceberg;
+   DROP CATALOG INTEGRATION IF EXISTS uc_f1_analytics_iceberg;
+   ```
+
+   The linked database is created with `ALLOWED_WRITE_OPERATIONS = NONE`, so dropping it should not touch the tables in Databricks (Snowflake propagates drops only when writes are allowed). Dropping an `ICEBERG TABLE` built from a REST catalog integration removes only the Snowflake object. `UC_ICEBERG_SYNC` is Terraform-managed, so step 4's plan will report it as "has been deleted" with `Marking the resource as removed` warnings; those are expected (see "Operations: drift and migration"). To keep the database instead, drop only its tables (`SHOW ICEBERG TABLES IN DATABASE UC_ICEBERG_SYNC;`, then `DROP ICEBERG TABLE` for each). `UC_ICEBERG_READER` owns the integrations, so drop them here rather than leaving them behind when Terraform drops that role.
+
+2. **The bundle** (job, pipelines, the schemas and raw volume it creates, deployed notebooks):
+
+   ```bash
+   databricks bundle destroy -t prod --profile <profile>
+   ```
+
+   Read the list before confirming. Deleting a pipeline deletes the tables it created. The deploying identity needs the "Service principal: User" role on the job's service principal, as for deploy. Use `-t dev` for the dev target.
+
+3. **Unblock Terraform:**
+   - Remove the three `prevent_destroy = true` lines in `databricks_catalog.tf` (`f1_analytics`, `raw`, `curated`). The catalogs must be empty, which step 2 does.
+   - The S3 bucket is versioned and has no `force_destroy`, so it won't delete while objects or versions remain. Either add `force_destroy = true` to `aws_s3_bucket.uc_storage` and `terraform apply` once, or empty it including every version with `aws s3api`.
+   - Optional: set `deletion_window_in_days = 7` in `kms.tf` and apply first, to shorten the KMS key's pending-deletion window from 30 days.
+
+4. **Destroy**, from `terraform/`, with the same AWS and Databricks profiles you applied with:
+
+   ```bash
+   terraform destroy
+   ```
+
+   This removes the catalogs, storage credential and external location, the S3 bucket, IAM role and policy, KMS key and alias, the Secrets Manager secret, the Databricks secret scope, the service principal (and its secret), the Snowflake service user, role, warehouse and `UC_ICEBERG_SYNC` (with its `ICEBERG TABLE`s).
+
+   If the destroy stops part-way, three failures are likely (all seen live):
+   - `object does not exist or not authorized` while revoking `INSERT,DELETE,TRUNCATE,SELECT,UPDATE ... OnAll TABLES InSchema "UC_ICEBERG_SYNC"."RAW"` (and `CURATED`). You dropped `UC_ICEBERG_SYNC` in step 1, and the provider can't detect a vanished schema for these grants, so it tries to revoke from objects that no longer exist. Nothing real is left to revoke: remove them from state and re-run.
+
+     ```bash
+     terraform state rm \
+       'snowflake_grant_privileges_to_account_role.table_data_rw["RAW"]' \
+       'snowflake_grant_privileges_to_account_role.table_data_rw["CURATED"]'
+     ```
+
+   - `BucketNotEmpty: ... You must delete all versions in the bucket` (the bucket held about 11,300 object versions and 7,700 delete markers, all under the three catalog prefixes). `force_destroy = true` on `aws_s3_bucket.uc_storage` makes Terraform empty it, but the attribute must reach state first. Use a targeted apply, because a plain `apply` part-way through a destroy would try to recreate everything already destroyed, then run the destroy again:
+
+     ```bash
+     terraform apply -target=aws_s3_bucket.uc_storage
+     terraform destroy
+     ```
+
+   - `Cannot delete external location ... 30 dependent managed tables ... 2 dependent managed volumes`. Unity Catalog still counts the managed tables and volumes the pipelines created, even after the catalogs are gone (probably dropped tables inside Unity Catalog's retention window, which is an inference). Force-delete the location, then re-run `terraform destroy`, which sees it is gone. Unity Catalog can no longer purge the files under that prefix, so they are removed only when the S3 bucket is emptied (step 3).
+
+     ```bash
+     databricks external-locations delete <location-name> --force --profile <profile>
+     ```
+
+5. **Clean up what's left:**
+   - The Secrets Manager secret has a default 30-day recovery window, and the same name can't be reused until it ends. To delete it now: `aws secretsmanager delete-secret --secret-id <var.snowflake_secret_name> --force-delete-without-recovery`.
+   - The KMS key stays in pending deletion for its window (30 days unless you lowered it).
+   - The metastore's `external_access_enabled` is shared and not in this state; turn it off with `databricks metastores update <metastore-id> --external-access-enabled=false` only if nothing else uses it.
+   - The one-time manual `CREATE INTEGRATION ... WITH GRANT OPTION` grant to `SECURITYADMIN` stays unless you revoke it.
+   - Local `terraform.tfvars`, the state files and `.terraform/` stay until you delete them. Don't print them: they hold keys and account identifiers.
+
 ## Known unknowns (flagged — confirm before relying on them)
 
 - ~~Exact UC "external data access" metastore toggle mechanism/scope~~ — resolved,

@@ -12,6 +12,10 @@ locals {
 resource "aws_s3_bucket" "uc_storage" {
   bucket = local.bucket_name
 
+  # Teardown only: lets `terraform destroy` delete the bucket although it is versioned
+  # and still holds objects and delete markers. Remove it again if the stack stays.
+  force_destroy = true
+
   # This account auto-injects tags (e.g. Owner, c7n-created-by) outside Terraform —
   # confirmed by a live plan showing Terraform wanting to remove them, the same org-
   # level tag-governance pattern that denied secretsmanager:UntagResource earlier
