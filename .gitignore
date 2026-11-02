@@ -82,3 +82,5 @@ terraform/**/*.auto.tfvars
 terraform/**/crash.log
 terraform/**/.terraform.lock.hcl
 terraform/**/.generated/
+
+presentation/**

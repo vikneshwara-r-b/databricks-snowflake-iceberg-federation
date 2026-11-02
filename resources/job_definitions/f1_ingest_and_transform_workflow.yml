@@ -14,7 +14,7 @@ resources:
         - name: f1_api_export_filename_prefix
           default: f1_api_export
         - name: volume_root_path
-          default: /Volumes/${var.catalog}/${resources.schemas.bronze_schema.name}/${var.raw_volume_name}
+          default: /Volumes/${var.raw_catalog}/${resources.schemas.bronze_schema.name}/${var.raw_volume_name}
         - name: volume_subdir_path
           default: race_results_dumps
         - name: f1_api_base_url
@@ -68,7 +68,7 @@ resources:
             notebook_path: ../../src/utility/sync_to_snowflake.ipynb
             source: WORKSPACE
             base_parameters:
-              catalog_name: ${var.catalog}
+              catalog_name: ${var.raw_catalog}
               secret_scope: "{{job.parameters.snowflake_secret_scope}}"
               layer: raw
               pipeline_id: ${resources.pipelines.f1_load_to_prepared.id}
@@ -98,13 +98,17 @@ resources:
             notebook_path: ../../src/utility/sync_to_snowflake.ipynb
             source: WORKSPACE
             base_parameters:
-              catalog_name: ${var.catalog}
+              catalog_name: ${var.curated_catalog}
               secret_scope: "{{job.parameters.snowflake_secret_scope}}"
               layer: curated
               pipeline_id: ${resources.pipelines.f1_curated_transformation.id}
           environment_key: snowflake_sync_env
 
-        # Step-4: Transform F1 data into modelled zone
+        # Step-4: Transform F1 data into modelled (gold) zone. There is deliberately no
+        # per-table Snowflake sync task after this one: the gold catalog is exposed to
+        # Snowflake through a catalog-linked database (created once, by a human as
+        # SYSADMIN — see README.md), which discovers and refreshes every table in it on
+        # its own.
         - task_key: modelled_zone_transform
           max_retries: 0
           min_retry_interval_millis: 0
@@ -114,25 +118,6 @@ resources:
           pipeline_task:
             pipeline_id: ${resources.pipelines.f1_analytics_transformation.id}
             full_refresh: ${var.full_refresh_all}
-
-        # Step-4b: Sync the analytics/gold layer's Iceberg tables to Snowflake right
-        # after the analytics pipeline finishes — the last step in the job, since
-        # there's no further layer after this one.
-        - task_key: analytics_snowflake_share
-          max_retries: 0
-          min_retry_interval_millis: 0
-          retry_on_timeout: false
-          depends_on:
-            - task_key: modelled_zone_transform
-          notebook_task:
-            notebook_path: ../../src/utility/sync_to_snowflake.ipynb
-            source: WORKSPACE
-            base_parameters:
-              catalog_name: ${var.catalog}
-              secret_scope: "{{job.parameters.snowflake_secret_scope}}"
-              layer: analytics
-              pipeline_id: ${resources.pipelines.f1_analytics_transformation.id}
-          environment_key: snowflake_sync_env
 
       # Serverless Python environment for the Snowflake sync task — declares its extra
       # dependency here instead of a %pip install cell, so the task doesn't pay for an

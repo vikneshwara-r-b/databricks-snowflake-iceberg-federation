@@ -1,4 +1,4 @@
-# Customer-managed KMS key for the two Secrets Manager secrets in secrets.tf. Without
+# Customer-managed KMS key for the Secrets Manager secret in secrets.tf. Without
 # this, Secrets Manager falls back to the AWS-managed aws/secretsmanager key, which a
 # security scan (CC-130) flags because a customer-managed key gives you control over
 # the key policy, rotation, and the ability to revoke access independently of the

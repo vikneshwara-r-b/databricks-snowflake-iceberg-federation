@@ -10,11 +10,11 @@ TBLPROPERTIES (
     'delta.universalFormat.enabledFormats' = 'iceberg'
 )
 WITH drivers_current AS (
-    SELECT * FROM ${catalog_name}.${curated_schema_name}.dim_drivers
+    SELECT * FROM ${curated_catalog_name}.${curated_schema_name}.dim_drivers
     WHERE `__END_AT` IS NULL
 ),
 teams_current AS (
-    SELECT * FROM ${catalog_name}.${curated_schema_name}.dim_teams
+    SELECT * FROM ${curated_catalog_name}.${curated_schema_name}.dim_teams
     WHERE `__END_AT` IS NULL
 )
 SELECT race_result.season_year, d.driver_Id, d.name as driver_name, t.team_Id, t.name as team_name
@@ -25,7 +25,7 @@ SELECT race_result.season_year, d.driver_Id, d.name as driver_name, t.team_Id, t
 ,AVG(race_result.driver_Race_Final_Position) AS avg_finish_position
 ,MIN(race_result.driver_Race_Final_Position) AS best_finish_position
 ,MAX(race_result.refreshed_at) AS refreshed_at
-FROM ${catalog_name}.${curated_schema_name}.fact_race_results race_result
+FROM ${curated_catalog_name}.${curated_schema_name}.fact_race_results race_result
 INNER JOIN drivers_current d ON race_result.driver_Id = d.driver_Id
 INNER JOIN teams_current t ON race_result.team_Id = t.team_Id
 GROUP BY race_result.season_year, d.driver_Id, d.name, t.team_Id, t.name

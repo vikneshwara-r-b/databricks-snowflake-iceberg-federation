@@ -54,17 +54,53 @@ resource "databricks_service_principal_secret" "snowflake_reader" {
 # NOTE (flagged — verify before relying on it): confirm EXTERNAL USE SCHEMA is actually
 # a valid catalog-level grant target for the databricks_grants resource/API, not just a
 # schema-level one, against current Databricks docs.
+#
+# One grant set per zone catalog (raw/curated/analytics — local.zone_catalogs): the job
+# writes to all three, and Snowflake's catalog integrations (one per catalog, since a
+# REST integration's CATALOG_NAME is a single catalog) read all three. The gold
+# catalog's grant is what the catalog-linked database authenticates against.
+#
+# The second grant gives whichever identity this Terraform authenticates as
+# (var.databricks_profile — the same pattern as the rule set at the bottom of this file)
+# full access to everything in all three catalogs. It's needed because the pipelines run
+# as the service principal (databricks.yml's prod run_as), so every table they create is
+# OWNED by it and the human who owns the catalog and deploys the bundle has no privilege
+# on those tables at all. The bundle's `permissions` block does NOT cover this: that's a
+# workspace ACL on the job/pipelines/notebook files, not a Unity Catalog data privilege.
+# Granted at catalog level so it is inherited by every current and future schema, table,
+# materialized view and volume the pipelines create. This resource is authoritative, so
+# this has to live here — a manual GRANT would be reverted by the next apply.
+#
+# ALL_PRIVILEGES is deliberately broad (read AND write, incl. the raw layer); narrow it
+# to e.g. USE CATALOG/USE SCHEMA/SELECT if write access isn't wanted.
 resource "databricks_grants" "catalog" {
-  catalog = databricks_catalog.f1_analytics.name
+  for_each = local.zone_catalogs
+  catalog  = each.value
 
   grant {
     principal = databricks_service_principal.snowflake_reader.application_id
+    # Underscore form (what the provider stores), not "USE CATALOG" with a space: the
+    # two are equivalent to Databricks, but a spaced name makes Terraform show this
+    # whole grant as removed-and-re-added whenever any other grant block on this
+    # resource changes.
     privileges = [
-      "USE CATALOG", "USE SCHEMA", "SELECT", "EXTERNAL USE SCHEMA",
-      "MODIFY", "CREATE TABLE", "CREATE MATERIALIZED VIEW",
-      "READ VOLUME", "WRITE VOLUME",
+      "USE_CATALOG", "USE_SCHEMA", "SELECT", "EXTERNAL_USE_SCHEMA",
+      "MODIFY", "CREATE_TABLE", "CREATE_MATERIALIZED_VIEW",
+      "READ_VOLUME", "WRITE_VOLUME",
     ]
   }
+
+  grant {
+    principal  = data.databricks_current_user.me.user_name
+    privileges = ["ALL_PRIVILEGES"]
+  }
+}
+
+# The grant that already exists on the gold catalog moves to its for_each address
+# instead of being destroyed and recreated.
+moved {
+  from = databricks_grants.catalog
+  to   = databricks_grants.catalog["analytics"]
 }
 
 resource "databricks_grants" "external_location" {

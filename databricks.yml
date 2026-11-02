@@ -10,8 +10,14 @@ include:
 
 # Variable declarations. These variables are assigned in the dev/prod targets below.
 variables:
-  catalog:
-    description: Describes which catalog to use
+  raw_catalog:
+    description: Unity Catalog catalog for the raw zone (also holds the raw landing volume)
+  curated_catalog:
+    description: Unity Catalog catalog for the curated zone
+  analytics_catalog:
+    description: >-
+      Unity Catalog catalog for the analytics (gold) zone. This is the catalog
+      Snowflake's catalog-linked database is linked to.
   raw_zone_schema_name:
     description: Raw zone Schema Name
   curated_zone_schema_name:
@@ -63,7 +69,11 @@ targets:
     # if you need to guarantee this target always deploys to one specific workspace
     # regardless of the active CLI profile.
     variables:
-      catalog: workspace
+      # dev can't create catalogs, so every zone shares the built-in `workspace`
+      # catalog — zone separation stays at the schema level there.
+      raw_catalog: workspace
+      curated_catalog: workspace
+      analytics_catalog: workspace
       raw_zone_schema_name: raw
       curated_zone_schema_name: curated
       analytics_zone_schema_name: analytics
@@ -98,7 +108,11 @@ targets:
       - user_name: ${workspace.current_user.userName}
         level: CAN_MANAGE
     variables:
-      catalog: f1_analytics
+      # One catalog per medallion zone — must match terraform/ (raw_catalog_name,
+      # curated_catalog_name, catalog_name).
+      raw_catalog: f1_raw
+      curated_catalog: f1_curated
+      analytics_catalog: f1_analytics
       raw_zone_schema_name: raw
       curated_zone_schema_name: curated
       analytics_zone_schema_name: analytics

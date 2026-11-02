@@ -10,7 +10,7 @@ TBLPROPERTIES (
     'delta.universalFormat.enabledFormats' = 'iceberg'
 )
 WITH circuits_current AS (
-    SELECT * FROM ${catalog_name}.${curated_schema_name}.dim_circuits
+    SELECT * FROM ${curated_catalog_name}.${curated_schema_name}.dim_circuits
     WHERE `__END_AT` IS NULL
 )
 SELECT c.circuit_Id, c.name as circuit_name, c.city, c.country
@@ -21,6 +21,6 @@ SELECT c.circuit_Id, c.name as circuit_name, c.city, c.country
 ,c.fastest_Lap_Driver_Id AS fastest_lap_driver_id
 ,MAX(r.refreshed_at) AS refreshed_at
 FROM circuits_current c
-INNER JOIN ${catalog_name}.${curated_schema_name}.fact_race_results r
+INNER JOIN ${curated_catalog_name}.${curated_schema_name}.fact_race_results r
 ON c.circuit_Id = r.circuit_Id
 GROUP BY c.circuit_Id, c.name, c.city, c.country, c.lap_Record, c.fastest_Lap_Driver_Id;

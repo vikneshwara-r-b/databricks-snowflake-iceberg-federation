@@ -2,7 +2,7 @@ resources:
   pipelines:
     f1_curated_transformation:
       name: f1_curated_transformation
-      catalog: ${var.catalog}
+      catalog: ${var.curated_catalog}
       schema: ${resources.schemas.silver_schema.name}
       serverless: true
       root_path: "../../src/transformations"
@@ -12,5 +12,5 @@ resources:
             include: ../../src/transformations/curated/**
     
       configuration:
-        catalog_name: ${var.catalog}
+        raw_catalog_name: ${var.raw_catalog}
         raw_schema_name: ${resources.schemas.bronze_schema.name}

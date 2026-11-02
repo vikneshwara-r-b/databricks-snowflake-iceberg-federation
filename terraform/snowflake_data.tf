@@ -21,18 +21,19 @@ resource "snowflake_database" "uc_sync" {
   provider = snowflake.sysadmin
 
   name    = var.snowflake_database
-  comment = "Holds the Iceberg tables mirroring Unity Catalog's raw, curated and analytics tables — created by Terraform"
+  comment = "Holds the Iceberg tables mirroring Unity Catalog's raw and curated tables — created by Terraform"
 }
 
-# One schema per entry in var.snowflake_sync_schemas (ANALYTICS/RAW/CURATED by
-# default) — a single for_each, now that ANALYTICS/RAW/CURATED all live under one
-# variable. This used to be two separate resources (one singular, one for_each) only
-# because ANALYTICS was already live under the singular address
-# (snowflake_schema.uc_sync) when RAW/CURATED were added, and refolding it into a
-# for_each at the time would have made Terraform plan to destroy and recreate the
-# already-live schema just to rename its state address. Unified now via `terraform
-# state mv` (moving the existing ANALYTICS/RAW/CURATED resources to their new
-# for_each addresses before this config was applied) rather than a destroy/recreate.
+# One schema per entry in var.snowflake_sync_schemas (RAW/CURATED by default). The gold
+# zone is deliberately not listed: it is exposed through a catalog-linked database
+# (created by a human SYSADMIN, see README.md), so ANALYTICS was removed from this list
+# — applying that destroyed the old ANALYTICS schema and the three ICEBERG TABLE
+# objects in it, Snowflake-side objects only, not any Databricks data.
+#
+# Everything under this database is Terraform-managed: if the database or a schema is
+# dropped outside Terraform, the next `terraform plan` reports it as "has been deleted"
+# (with "Marking the resource as removed" warnings from the dependent grants) and plans
+# to recreate it — the warnings are expected, not errors; `terraform apply` fixes it.
 resource "snowflake_schema" "sync" {
   provider = snowflake.sysadmin
   for_each = toset(var.snowflake_sync_schemas)
