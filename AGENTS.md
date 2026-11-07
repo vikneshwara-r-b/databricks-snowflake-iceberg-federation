@@ -114,10 +114,14 @@ integration, which the `CREATE DATABASE ... LINKED_CATALOG` needs.
     `UC_ICEBERG_READER`. The explicit `USAGE` grant is there to make it work; if it still
     fails, create the database as `ACCOUNTADMIN`, or fall back to a one-time
     `ACCOUNTADMIN` grant of `CREATE DATABASE` to `SECURITYADMIN` `WITH GRANT OPTION`.
-  - That the linked database discovers Lakeflow materialized views.
-  - What it does after a full refresh: per Snowflake's docs a UUID mismatch drops the
-    table from the linked database (the remote is untouched); whether the next poll
-    re-adds it is untested.
+  - What it does if a gold view's Iceberg UUID changes: per Snowflake's docs a UUID
+    mismatch drops the table from the linked database (the remote is untouched); whether
+    the next poll re-adds it is untested.
+- Observed live (1-2 Nov 2026): the linked database discovered all three Lakeflow
+  materialized views (Snowsight listed them and previewed rows). After a full refresh of
+  all three pipelines the gold views kept their Iceberg UUIDs (only the streaming tables
+  got new ones), so it had nothing to drop and `SYSTEM$CATALOG_LINK_STATUS` stayed
+  `RUNNING` with an empty `failureDetails`.
 
 ### Snowflake sync of raw and curated is config-driven, per-layer, not hardcoded or end-of-job
 
@@ -207,7 +211,8 @@ checking, so the field receives a real boolean — verified by inspecting the re
 value's Python type via `databricks bundle validate --output json`. Also note that a
 full refresh breaks the raw/curated Snowflake tables until the sync notebook's
 UUID-mismatch recovery runs; see the sync section above. For the gold zone's
-catalog-linked database the outcome is untested (see that section).
+catalog-linked database, one full refresh left it healthy because the materialized views
+kept their Iceberg UUIDs (see that section).
 
 ### Liquid Clustering: declared everywhere, whether it actually runs is unverified
 
