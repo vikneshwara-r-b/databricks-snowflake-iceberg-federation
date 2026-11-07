@@ -371,10 +371,12 @@ storage, which changes its Iceberg table UUID. Snowflake's existing `ICEBERG TAB
 objects are pinned to the previous UUID, so `ALTER ICEBERG TABLE ... REFRESH` fails
 afterwards. For the raw and curated zones, `sync_to_snowflake.ipynb` detects that
 specific error and drops and recreates the affected Snowflake table automatically, so
-those sync tasks recover on their own. The gold zone has no such code path: per
-Snowflake's documentation a table whose UUID no longer matches is dropped from the
-catalog-linked database, and whether the next discovery poll re-adds it unattended has
-not been tested here.
+those sync tasks recover on their own. The gold zone has no such code path. In a full refresh I ran, the three gold
+materialized views kept their Iceberg UUIDs (only the streaming tables got new ones), so the
+catalog-linked database had nothing to drop and stayed healthy (`SYSTEM$CATALOG_LINK_STATUS`
+`RUNNING`, no failures). Per Snowflake's documentation a table whose UUID no longer matches
+is dropped from a catalog-linked database; whether the next discovery poll re-adds it
+unattended has not been tested here.
 
 ### 5. Verify
 
@@ -404,9 +406,8 @@ SHOW ICEBERG TABLES IN SCHEMA UC_ICEBERG_SYNC.CURATED;
 ```
 
 Full prerequisite detail, the exact Snowflake service-user setup commands, and the list
-of still-unverified details (whether the catalog-linked database discovers Lakeflow
-materialized views, its behaviour after a full refresh, the Public Preview catalog
-integration syntax) are all in [`terraform/README.md`](terraform/README.md).
+of still-unverified details (what the catalog-linked database does if a gold view's
+Iceberg UUID changes, and the Public Preview catalog integration syntax) are all in [`terraform/README.md`](terraform/README.md).
 
 ## How the Snowflake federation works
 

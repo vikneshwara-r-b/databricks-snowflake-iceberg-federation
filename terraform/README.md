@@ -635,16 +635,14 @@ Nothing here has been run end to end; the order and the blockers below are deriv
   integration), or to go back to granting the runtime role `CREATE DATABASE` through a
   one-time `ACCOUNTADMIN` grant of it to `SECURITYADMIN` `WITH GRANT OPTION` — which
   this design deliberately avoided.
-- Whether Snowflake's catalog-linked database discovers Lakeflow **materialized views**
-  from Unity Catalog's Iceberg REST endpoint. Snowflake's own Unity Catalog tutorial
-  doesn't cover MVs or streaming tables; the `pipelines.externalMetadata.enabled`
-  property that made individually-created `ICEBERG TABLE`s work should make them
-  discoverable too, but this is unconfirmed until the first live run after the
-  per-zone-catalog change.
-- What a catalog-linked database does after a Databricks **full refresh**: Snowflake's
-  docs say a table whose `table-uuid` no longer matches is dropped from the linked
-  database (the remote table is untouched). Whether the next discovery poll then
-  re-adds it with the new UUID, unattended, needs a live check.
+- What a catalog-linked database does if a gold view's Iceberg `table-uuid` changes:
+  Snowflake's docs say such a table is dropped from the linked database (the remote table
+  is untouched). Whether the next discovery poll then re-adds it with the new UUID,
+  unattended, needs a live check. Confirmed live (1-2 Nov 2026), so no longer open: the
+  linked database discovers Lakeflow **materialized views** (Snowsight lists all three and
+  previews rows), and after a Databricks **full refresh** the gold views kept their UUIDs
+  (only the streaming tables got new ones), so nothing was dropped and the link status
+  stayed `RUNNING` with an empty `failureDetails`.
 - Catalog-linked databases' feature status (preview vs GA) — the Snowflake docs pages
   consulted don't say.
 - The exact role privilege set listed under "The Snowflake warehouse, database,
